@@ -21,6 +21,8 @@ Then, the different modules of `tudatpy` that will be used are imported.
 # Load standard modules
 import numpy as np
 import sys
+import os
+import pandas as pd
 import matplotlib
 from matplotlib import pyplot as plt
 
@@ -41,7 +43,7 @@ spice.load_standard_kernels()
 
 # Set simulation start and end epochs
 simulation_start_epoch = DateTime(2000, 1, 1).epoch()
-simulation_end_epoch   = DateTime(2000, 1, 2).epoch()
+simulation_end_epoch   = DateTime(2000, 1, 3).epoch()
 
 ## Environment setup
 """
@@ -65,7 +67,7 @@ bodies_to_create = ["Sun", "Moon"]
 
 # Use "Earth"/"J2000" as global frame origin and orientation.
 global_frame_origin = "Moon"
-global_frame_orientation = "J2000"
+global_frame_orientation = "ECLIPJ2000"
 
 # Create default body settings, usually from `spice`.
 body_settings = environment_setup.get_default_body_settings(
@@ -73,30 +75,195 @@ body_settings = environment_setup.get_default_body_settings(
     global_frame_origin,
     global_frame_orientation)
 
+# Create settings for the GRAIL A satellite (initialize an empyt settings object to which we will add the vehicle shape and mass information)
 body_settings.add_empty_settings("GRAIL_A")
 
-print(dir(body_settings.get("GRAIL_A").vehicle_shape_settings))
+# Create settings object for each panel
 
+# first read the panel data from input file
+this_file_path = os.path.dirname(os.path.abspath(__file__))
+panel_data = pd.read_csv(this_file_path + "/input/grail_macromodel.txt", delimiter=", ", engine="python")
+material_data = pd.read_csv(this_file_path + "/input/grail_materials.txt", delimiter=", ", engine="python")
+
+all_panel_settings = []
+
+
+for i, row in panel_data.iterrows():
+    # create panel geometry settings
+    # Options are: frame_fixed_panel_geometry, time_varying_panel_geometry, body_tracking_panel_geometry
+    panel_geometry_settings = environment_setup.vehicle_systems.frame_fixed_panel_geometry(
+        np.array([row["x"], row["y"], row["z"]]), # panel position in body reference frame
+        row["area"] # panel area
+    )    
+    
+    panel_material_data = material_data[material_data["material"] == row["material"]]
+        
+    # create panel radiation settings (for specular and diffuse reflection)
+    specular_diffuse_body_panel_reflection_settings = environment_setup.radiation_pressure.specular_diffuse_body_panel_reflection(
+        specular_reflectivity=float(panel_material_data["Cs"].iloc[0]), diffuse_reflectivity=float(panel_material_data["Cd"].iloc[0]), with_instantaneous_reradiation=True
+    )
+    
+    # create settings for complete pannel (combining geometry and matrial properties relevant for radiation pressure calculations)
+    complete_panel_settings = environment_setup.vehicle_systems.body_panel_settings(
+        panel_geometry_settings,
+        specular_diffuse_body_panel_reflection_settings
+    )
+    
+    # add panel settings to list of all panel settings
+    all_panel_settings.append(
+        complete_panel_settings
+    )
+
+# Create settings object for complete vehicle shape
 full_panelled_body_settings = environment_setup.vehicle_systems.full_panelled_body_settings(
-    "tes"
+    all_panel_settings
+)
+
+# set mass of GRAIL_A
+body_settings.get("GRAIL_A").constant_mass = 202.4
+
+# need to add an emphermeis setting to GRAIL_A in order to add synchronous rotation model
+body_settings.get("GRAIL_A").ephemeris_settings = environment_setup.ephemeris.direct_spice("Moon", "ECLIPJ2000")
+
+# need to add a roation model to GRAIL_A (synchronous) in order to create vehicle shape
+body_settings.get("GRAIL_A").rotation_model_settings = environment_setup.rotation_model.synchronous(
+    "Moon", "ECLIPJ2000", "VehicleFixed"
+)
+
+# add the full panelled body settings to GRAIL_A settings
+body_settings.get("GRAIL_A").vehicle_shape_settings = full_panelled_body_settings
+
+# define by which bodies the radiation pressure of GRAIL_A is to be calculated (and which bodies provide shading)
+body_settings.get("GRAIL_A").radiation_pressure_target_settings = \
+    environment_setup.radiation_pressure.panelled_radiation_target({
+        "Sun": ["Moon"]
+    })
+
+bodies = environment_setup.create_system_of_bodies(body_settings)
+
+
+# Define bodies that are propagated
+bodies_to_propagate = ["GRAIL_A"]
+
+# Define central body of propagation
+central_bodies = ["Moon"]
+
+
+# Define accelerations acting on GRAIL_A
+acceleration_settings_GRAIL_A = dict(
+    Moon=[propagation_setup.acceleration.point_mass_gravity()],
+    Sun=[propagation_setup.acceleration.radiation_pressure()],
+)
+
+acceleration_settings = {"GRAIL_A": acceleration_settings_GRAIL_A}
+
+# Create acceleration models
+acceleration_models = propagation_setup.create_acceleration_models(
+    bodies, acceleration_settings, bodies_to_propagate, central_bodies
 )
 
 
+# Set initial conditions for the satellite that will be
+# propagated in this simulation. The initial conditions are given in
+# Keplerian elements and later on converted to Cartesian elements
+moon_gravitational_parameter = bodies.get("Moon").gravitational_parameter
+initial_state = element_conversion.keplerian_to_cartesian_elementwise(
+    gravitational_parameter=moon_gravitational_parameter,
+    semi_major_axis=384748 + 500,
+    eccentricity=4.03294322e-03,
+    inclination=1.71065169e+00,
+    argument_of_periapsis=1.31226971e+00,
+    longitude_of_ascending_node=3.82958313e-01,
+    true_anomaly=3.07018490e+00,
+)
+
+
+# Create termination settings
+termination_settings = propagation_setup.propagator.time_termination(simulation_end_epoch)
+
+# Create boring numerical integrator settings
+fixed_step_size = 10.0
+integrator_settings = propagation_setup.integrator.runge_kutta_4(fixed_step_size)
+
+# Create propagation settings
+propagator_settings = propagation_setup.propagator.translational(
+    central_bodies,
+    acceleration_models,
+    bodies_to_propagate,
+    initial_state,
+    simulation_start_epoch,
+    integrator_settings,
+    termination_settings
+)
+
+# Create simulation object and propagate the dynamics
+dynamics_simulator = numerical_simulation.create_dynamics_simulator(
+    bodies, propagator_settings
+)
+
+# Extract the resulting state history and convert it to an ndarray
+states = dynamics_simulator.state_history
+states_array_1 = result2array(states)
 
 
 
-sys.exit()
-# Create system of selected celestial bodies
-bodies = environment_setup.create_system_of_bodies(body_settings)
+###############################################################################
 
-### Create the vehicle
-"""
-Let's now create the GRAIL A satellite.
-"""
+# lets make it more interesting by adding the effect of the Moon's radiation pressure on the satellite
+# for now lets assume a cannonball radiation pressure model, for this we can add to our previous accelearation settings
 
-# Create vehicle objects.
-bodies.create_empty_body("GRAIL_A")
 
-print(dir(bodies.get_body("GRAIL_A").vehicle_systems))
+# first lets add a new radiation pressure target to GRAIL_A for the moon
+moon_cannonball_radiation_settings = environment_setup.radiation_pressure.cannonball_radiation_target(
+    2.0, 0.5, {"Moon": []}
+)
 
-print(dir(environment_setup.vehicle_systems))
+environment_setup.add_radiation_pressure_target_model(
+    bodies, "GRAIL_A", moon_cannonball_radiation_settings
+)
+
+# Next specify that we want to account for this acceleration in the acceleration settings 
+
+acceleration_settings_GRAIL_A["Moon"].append(
+    propagation_setup.acceleration.radiation_pressure()
+)
+
+# Re-create acceleration models
+acceleration_settings = {"GRAIL_A": acceleration_settings_GRAIL_A}
+
+acceleration_models = propagation_setup.create_acceleration_models(
+    bodies, acceleration_settings, bodies_to_propagate, central_bodies
+)
+
+# We can re-use the same propagator settings, initial state and integrator settings as before
+
+dynamics_simulator = numerical_simulation.create_dynamics_simulator(
+    bodies, propagator_settings
+)
+
+# Extract the resulting state history and convert it to an ndarray
+states = dynamics_simulator.state_history
+states_array_2 = result2array(states)
+
+
+
+
+
+
+print(dir(bodies.get("GRAIL_A")))
+
+
+# print(body_settings.get("GRAIL_A").radiation_pressure_target_settings)
+
+
+# create 3D plot of orbit
+
+ax = plt.figure().add_subplot(projection='3d')
+
+ax.plot(states_array_1[:, 1], states_array_1[:, 2], states_array_1[:, 3])
+ax.plot(states_array_2[:, 1], states_array_2[:, 2], states_array_2[:, 3])
+
+plt.show()
+
+
+

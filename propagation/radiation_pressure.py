@@ -85,8 +85,8 @@ this_file_path = os.path.dirname(os.path.abspath(__file__))
 panel_data = pd.read_csv(this_file_path + "/input/grail_macromodel.txt", delimiter=", ", engine="python")
 material_data = pd.read_csv(this_file_path + "/input/grail_materials.txt", delimiter=", ", engine="python")
 
+# initialize list to store all panel settings
 all_panel_settings = []
-
 
 for i, row in panel_data.iterrows():
     # create panel geometry settings
@@ -103,7 +103,7 @@ for i, row in panel_data.iterrows():
         specular_reflectivity=float(panel_material_data["Cs"].iloc[0]), diffuse_reflectivity=float(panel_material_data["Cd"].iloc[0]), with_instantaneous_reradiation=True
     )
     
-    # create settings for complete pannel (combining geometry and matrial properties relevant for radiation pressure calculations)
+    # create settings for complete pannel (combining geometry and material properties relevant for radiation pressure calculations)
     complete_panel_settings = environment_setup.vehicle_systems.body_panel_settings(
         panel_geometry_settings,
         specular_diffuse_body_panel_reflection_settings
@@ -213,6 +213,22 @@ states_array_1 = result2array(states)
 # for now lets assume a cannonball radiation pressure model, for this we can add to our previous accelearation settings
 
 
+# Add Moon radiation properties
+moon_surface_radiosity_models = [
+    environment_setup.radiation_pressure.thermal_emission_angle_based_radiosity(
+        minimum_temperature=95.0, maximum_temperature=385.0, constant_emissivity=0.95, original_source_name="Sun" ),
+    
+    environment_setup.radiation_pressure.variable_albedo_surface_radiosity(
+        environment_setup.radiation_pressure.predefined_spherical_harmonic_surface_property_distribution( environment_setup.radiation_pressure.albedo_dlam1 ), "Sun" ) ]
+
+# update moon settings
+body_settings.get( "Moon" ).radiation_source_settings = environment_setup.radiation_pressure.panelled_extended_radiation_source(
+    moon_surface_radiosity_models, [ 6, 12, 18 ] )
+
+# create bodies with updated settings
+
+bodies = environment_setup.create_system_of_bodies(body_settings)
+
 # first lets add a new radiation pressure target to GRAIL_A for the moon
 moon_cannonball_radiation_settings = environment_setup.radiation_pressure.cannonball_radiation_target(
     2.0, 0.5, {"Moon": []}
@@ -222,8 +238,7 @@ environment_setup.add_radiation_pressure_target_model(
     bodies, "GRAIL_A", moon_cannonball_radiation_settings
 )
 
-# Next specify that we want to account for this acceleration in the acceleration settings 
-
+# Next specify that we want to account for this acceleration in the acceleration settings
 acceleration_settings_GRAIL_A["Moon"].append(
     propagation_setup.acceleration.radiation_pressure()
 )
@@ -236,7 +251,6 @@ acceleration_models = propagation_setup.create_acceleration_models(
 )
 
 # We can re-use the same propagator settings, initial state and integrator settings as before
-
 dynamics_simulator = numerical_simulation.create_dynamics_simulator(
     bodies, propagator_settings
 )
@@ -246,7 +260,16 @@ states = dynamics_simulator.state_history
 states_array_2 = result2array(states)
 
 
+###############################################################################
 
+# lets bump up the realism abit more, lets use a panelled radiation pressure model for the effect of the moon on the s/c
+
+# first lets update the settings of GRAIL_A
+
+
+
+
+print(dir(environment_setup.radiation_pressure))
 
 
 

@@ -250,6 +250,7 @@ acceleration_models = propagation_setup.create_acceleration_models(
     bodies, acceleration_settings, bodies_to_propagate, central_bodies
 )
 
+print("\n\nRunning simulation with Moon radiation pressure (cannonball model)")
 # We can re-use the same propagator settings, initial state and integrator settings as before
 dynamics_simulator = numerical_simulation.create_dynamics_simulator(
     bodies, propagator_settings
@@ -263,30 +264,59 @@ states_array_2 = result2array(states)
 ###############################################################################
 
 # lets bump up the realism abit more, lets use a panelled radiation pressure model for the effect of the moon on the s/c
+# first lets recreate the bodies using the body settings we have already defined (this does not include the canonical radiation pressure model for the moon)
 
-# first lets update the settings of GRAIL_A
+bodies = environment_setup.create_system_of_bodies(body_settings)
 
+# Next we need to add the panelled radiation pressure model for the moon to the moon settings
+# Create panelled radiation pressure settings for the moon
 
+moon_panelled_radiation_settings = environment_setup.radiation_pressure.panelled_radiation_target(
+    {"Moon": []}
+)
 
+environment_setup.add_radiation_pressure_target_model(
+    bodies, "GRAIL_A", moon_panelled_radiation_settings
+)
 
-print(dir(environment_setup.radiation_pressure))
+print("\n\nRunning simulation with Moon radiation pressure (panelled model)")
 
+dynamics_simulator = numerical_simulation.create_dynamics_simulator(
+    bodies, propagator_settings
+)
 
-
-print(dir(bodies.get("GRAIL_A")))
+# Extract the resulting state history and convert it to an ndarray
+states = dynamics_simulator.state_history
+states_array_3 = result2array(states)
 
 
 # print(body_settings.get("GRAIL_A").radiation_pressure_target_settings)
 
+print("Done!")
+
+sys.exit()
+
+
+plt.figure()
+
+
+plt.plot(states_array_2[:, 0] - states_array_1[:, 0], states_array_2[:, 1] - states_array_1[:, 1])
+plt.plot(states_array_3[:, 0] - states_array_2[:, 0], states_array_3[:, 1] - states_array_2[:, 1])
+
+plt.show()
+
+
+
 
 # create 3D plot of orbit
 
-ax = plt.figure().add_subplot(projection='3d')
+# ax = plt.figure().add_subplot(projection='3d')
 
-ax.plot(states_array_1[:, 1], states_array_1[:, 2], states_array_1[:, 3])
-ax.plot(states_array_2[:, 1], states_array_2[:, 2], states_array_2[:, 3])
+# ax.plot(states_array_1[:, 1], states_array_1[:, 2], states_array_1[:, 3])
+# ax.plot(states_array_2[:, 1], states_array_2[:, 2], states_array_2[:, 3])
+# ax.plot(states_array_3[:, 1], states_array_3[:, 2], states_array_3[:, 3])
 
-plt.show()
+# plt.show()
 
 
 

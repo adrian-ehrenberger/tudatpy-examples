@@ -25,6 +25,7 @@ import os
 import pandas as pd
 import matplotlib
 from matplotlib import pyplot as plt
+sys.path.insert(0, "/home/tudat-bundle/build/tudatpy")
 
 # Load tudatpy modules
 from tudatpy.interface import spice
@@ -43,7 +44,7 @@ spice.load_standard_kernels()
 
 # Set simulation start and end epochs
 simulation_start_epoch = DateTime(2000, 1, 1).epoch()
-simulation_end_epoch   = DateTime(2000, 1, 3).epoch()
+simulation_end_epoch   = simulation_start_epoch + 2.0 * 24 * 60**2
 
 ## Environment setup
 """
@@ -61,6 +62,8 @@ These settings can be adjusted. Please refere to the [Available Environment Mode
 
 Finally, the system of bodies is created using the settings. This system of bodies is stored into the variable `bodies`.
 """
+
+
 
 # Define string names for bodies to be created from default.
 bodies_to_create = ["Sun", "Moon"]
@@ -130,17 +133,6 @@ body_settings.get("GRAIL_A").rotation_model_settings = environment_setup.rotatio
     "Moon", "ECLIPJ2000", "VehicleFixed"
 )
 
-# add the full panelled body settings to GRAIL_A settings
-body_settings.get("GRAIL_A").vehicle_shape_settings = full_panelled_body_settings
-
-# define by which bodies the radiation pressure of GRAIL_A is to be calculated (and which bodies provide shading)
-body_settings.get("GRAIL_A").radiation_pressure_target_settings = \
-    environment_setup.radiation_pressure.panelled_radiation_target({
-        "Sun": ["Moon"]
-    })
-
-bodies = environment_setup.create_system_of_bodies(body_settings)
-
 
 # Define bodies that are propagated
 bodies_to_propagate = ["GRAIL_A"]
@@ -148,70 +140,38 @@ bodies_to_propagate = ["GRAIL_A"]
 # Define central body of propagation
 central_bodies = ["Moon"]
 
-
-# Define accelerations acting on GRAIL_A
-acceleration_settings_GRAIL_A = dict(
-    Moon=[propagation_setup.acceleration.point_mass_gravity()],
-    Sun=[propagation_setup.acceleration.radiation_pressure()],
-)
-
-acceleration_settings = {"GRAIL_A": acceleration_settings_GRAIL_A}
-
-# Create acceleration models
-acceleration_models = propagation_setup.create_acceleration_models(
-    bodies, acceleration_settings, bodies_to_propagate, central_bodies
-)
-
-
 # Set initial conditions for the satellite that will be
 # propagated in this simulation. The initial conditions are given in
 # Keplerian elements and later on converted to Cartesian elements
+# create bodies to retrive grav para, will be overwritten later
+bodies = environment_setup.create_system_of_bodies(body_settings)
 moon_gravitational_parameter = bodies.get("Moon").gravitational_parameter
 initial_state = element_conversion.keplerian_to_cartesian_elementwise(
     gravitational_parameter=moon_gravitational_parameter,
-    semi_major_axis=384748 + 500,
+    semi_major_axis=1788000,
     eccentricity=4.03294322e-03,
-    inclination=1.71065169e+00,
+    inclination=np.rad2deg(90),
     argument_of_periapsis=1.31226971e+00,
     longitude_of_ascending_node=3.82958313e-01,
     true_anomaly=3.07018490e+00,
 )
 
-
 # Create termination settings
 termination_settings = propagation_setup.propagator.time_termination(simulation_end_epoch)
 
 # Create boring numerical integrator settings
-fixed_step_size = 10.0
+fixed_step_size = 1
 integrator_settings = propagation_setup.integrator.runge_kutta_4(fixed_step_size)
+    
 
-# Create propagation settings
-propagator_settings = propagation_setup.propagator.translational(
-    central_bodies,
-    acceleration_models,
-    bodies_to_propagate,
-    initial_state,
-    simulation_start_epoch,
-    integrator_settings,
-    termination_settings
-)
+dependent_variables_to_save = [
+    propagation_setup.dependent_variable.total_acceleration("GRAIL_A"),
+    propagation_setup.dependent_variable.single_acceleration(propagation_setup.acceleration.radiation_pressure_type, "GRAIL_A", "Sun"),
+    propagation_setup.dependent_variable.single_acceleration(propagation_setup.acceleration.radiation_pressure_type, "GRAIL_A", "Moon")
+]
 
-# Create simulation object and propagate the dynamics
-dynamics_simulator = numerical_simulation.create_dynamics_simulator(
-    bodies, propagator_settings
-)
-
-# Extract the resulting state history and convert it to an ndarray
-states = dynamics_simulator.state_history
-states_array_1 = result2array(states)
-
-
-
-###############################################################################
-
-# lets make it more interesting by adding the effect of the Moon's radiation pressure on the satellite
-# for now lets assume a cannonball radiation pressure model, for this we can add to our previous accelearation settings
-
+# add the full panelled body settings to GRAIL_A settings
+# body_settings.get("GRAIL_A").vehicle_shape_settings = full_panelled_body_settings
 
 # Add Moon radiation properties
 moon_surface_radiosity_models = [
@@ -238,9 +198,30 @@ environment_setup.add_radiation_pressure_target_model(
     bodies, "GRAIL_A", moon_cannonball_radiation_settings
 )
 
-# Next specify that we want to account for this acceleration in the acceleration settings
-acceleration_settings_GRAIL_A["Moon"].append(
-    propagation_setup.acceleration.radiation_pressure()
+sun_cannonball_radiation_settings = environment_setup.radiation_pressure.cannonball_radiation_target(
+    2.0, 0.5, {"Sun": ["Moon"]}
+)
+environment_setup.add_radiation_pressure_target_model(
+    bodies, "GRAIL_A", sun_cannonball_radiation_settings
+)
+
+# sun_panelled_radiation_settings = environment_setup.radiation_pressure.panelled_radiation_target(
+#     {"Sun": ["Moon"]}
+# )
+# environment_setup.add_radiation_pressure_target_model(
+#     bodies, "GRAIL_A", sun_panelled_radiation_settings
+# )
+
+# from pprint import pprint
+# pprint(dir(propagation_setup.acceleration))
+
+# sys.exit()
+
+# Define accelerations acting on GRAIL_A
+acceleration_settings_GRAIL_A = dict(
+    Moon=[propagation_setup.acceleration.point_mass_gravity(),
+            propagation_setup.acceleration.radiation_pressure()],
+    Sun=[propagation_setup.acceleration.radiation_pressure()],
 )
 
 # Re-create acceleration models
@@ -250,36 +231,51 @@ acceleration_models = propagation_setup.create_acceleration_models(
     bodies, acceleration_settings, bodies_to_propagate, central_bodies
 )
 
+# Create propagation settings
+propagator_settings = propagation_setup.propagator.translational(
+    central_bodies,
+    acceleration_models,
+    bodies_to_propagate,
+    initial_state,
+    simulation_start_epoch,
+    integrator_settings,
+    termination_settings,
+    output_variables=dependent_variables_to_save
+)
+
 print("\n\nRunning simulation with Moon radiation pressure (cannonball model)")
 # We can re-use the same propagator settings, initial state and integrator settings as before
 dynamics_simulator = numerical_simulation.create_dynamics_simulator(
     bodies, propagator_settings
 )
 
+
 # Extract the resulting state history and convert it to an ndarray
 states = dynamics_simulator.state_history
-states_array_2 = result2array(states)
+states_array = result2array(states)
+dep_vars = dynamics_simulator.dependent_variable_history
+dep_vars_array = result2array(dep_vars)
+
+## Post-processing (saving data)
+
+np.savetxt(os.path.join(this_file_path, "output", "radiation_pressure", "states_B.dat"), states_array)
+np.savetxt(os.path.join(this_file_path, "output", "radiation_pressure", "dep_vars_B.dat"), dep_vars_array)
 
 
-###############################################################################
+fixed_step_size = 0.5
+integrator_settings = propagation_setup.integrator.runge_kutta_4(fixed_step_size)
 
-# lets bump up the realism abit more, lets use a panelled radiation pressure model for the effect of the moon on the s/c
-# first lets recreate the bodies using the body settings we have already defined (this does not include the canonical radiation pressure model for the moon)
 
-bodies = environment_setup.create_system_of_bodies(body_settings)
-
-# Next we need to add the panelled radiation pressure model for the moon to the moon settings
-# Create panelled radiation pressure settings for the moon
-
-moon_panelled_radiation_settings = environment_setup.radiation_pressure.panelled_radiation_target(
-    {"Moon": []}
+propagator_settings = propagation_setup.propagator.translational(
+    central_bodies,
+    acceleration_models,
+    bodies_to_propagate,
+    initial_state,
+    simulation_start_epoch,
+    integrator_settings,
+    termination_settings,
+    output_variables=dependent_variables_to_save
 )
-
-environment_setup.add_radiation_pressure_target_model(
-    bodies, "GRAIL_A", moon_panelled_radiation_settings
-)
-
-print("\n\nRunning simulation with Moon radiation pressure (panelled model)")
 
 dynamics_simulator = numerical_simulation.create_dynamics_simulator(
     bodies, propagator_settings
@@ -287,36 +283,11 @@ dynamics_simulator = numerical_simulation.create_dynamics_simulator(
 
 # Extract the resulting state history and convert it to an ndarray
 states = dynamics_simulator.state_history
-states_array_3 = result2array(states)
+states_array = result2array(states)
+dep_vars = dynamics_simulator.dependent_variable_history
+dep_vars_array = result2array(dep_vars)
 
+## Post-processing (saving data)
 
-# print(body_settings.get("GRAIL_A").radiation_pressure_target_settings)
-
-print("Done!")
-
-sys.exit()
-
-
-plt.figure()
-
-
-plt.plot(states_array_2[:, 0] - states_array_1[:, 0], states_array_2[:, 1] - states_array_1[:, 1])
-plt.plot(states_array_3[:, 0] - states_array_2[:, 0], states_array_3[:, 1] - states_array_2[:, 1])
-
-plt.show()
-
-
-
-
-# create 3D plot of orbit
-
-# ax = plt.figure().add_subplot(projection='3d')
-
-# ax.plot(states_array_1[:, 1], states_array_1[:, 2], states_array_1[:, 3])
-# ax.plot(states_array_2[:, 1], states_array_2[:, 2], states_array_2[:, 3])
-# ax.plot(states_array_3[:, 1], states_array_3[:, 2], states_array_3[:, 3])
-
-# plt.show()
-
-
-
+np.savetxt(os.path.join(this_file_path, "output", "radiation_pressure", "states_B_high_accuracy.dat"), states_array)
+np.savetxt(os.path.join(this_file_path, "output", "radiation_pressure", "dep_vars_B_high_accuracy.dat"), dep_vars_array)

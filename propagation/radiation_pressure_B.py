@@ -170,9 +170,6 @@ dependent_variables_to_save = [
     propagation_setup.dependent_variable.single_acceleration(propagation_setup.acceleration.radiation_pressure_type, "GRAIL_A", "Moon")
 ]
 
-# add the full panelled body settings to GRAIL_A settings
-# body_settings.get("GRAIL_A").vehicle_shape_settings = full_panelled_body_settings
-
 # Add Moon radiation properties
 moon_surface_radiosity_models = [
     environment_setup.radiation_pressure.thermal_emission_angle_based_radiosity(

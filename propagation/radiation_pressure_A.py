@@ -179,13 +179,6 @@ body_settings.get("GRAIL_A").radiation_pressure_target_settings = \
 
 bodies = environment_setup.create_system_of_bodies(body_settings)
 
-
-# Define bodies that are propagated
-bodies_to_propagate = ["GRAIL_A"]
-
-# Define central body of propagation
-central_bodies = ["Moon"]
-
 # Define accelerations acting on GRAIL_A
 acceleration_settings_GRAIL_A = dict(
     Moon=[propagation_setup.acceleration.point_mass_gravity()],

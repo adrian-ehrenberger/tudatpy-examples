@@ -128,8 +128,6 @@ bodies_to_propagate = ["GRAIL_A"]
 # Define central body of propagation
 central_bodies = ["Moon"]
 
-moon_gravitational_parameter = spice.get_body_gravitational_parameter("Moon")
-
 initial_state = spice.get_body_cartesian_state_at_epoch("GRAIL_A", "Moon", "ECLIPJ2000", "None", simulation_start_epoch)
 
 # Create termination settings
@@ -350,7 +348,7 @@ states_B_C = states_B - states_C
 dep_vars_A_C = dep_vars_A[:, 0:4] - dep_vars_C[:, 0:4]
 dep_vars_B_C = dep_vars_B[:, 0:4] - dep_vars_C[:, 0:4]
 
-
+moon_gravitational_parameter = spice.get_body_gravitational_parameter("Moon")
 keplerian_initial_state = element_conversion.cartesian_to_keplerian(initial_state, moon_gravitational_parameter)
 orbital_period = 2 * np.pi * ( keplerian_initial_state[0]**3 / moon_gravitational_parameter ) ** (1/2)
 no_orbits_array = time_array / orbital_period

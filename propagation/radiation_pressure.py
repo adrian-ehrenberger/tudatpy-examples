@@ -40,9 +40,8 @@ spice.load_standard_kernels()
 
 ## Configuration
 
-
 # Set simulation start and end epochs
-simulation_start_epoch = DateTime(2000, 1, 1).epoch()
+simulation_start_epoch = DateTime(2012, 4, 2).epoch() + 12 * 60**2
 simulation_end_epoch   = simulation_start_epoch + 2.0 * 24 * 60**2
 
 # Define string names for bodies to be created from default.
@@ -50,7 +49,8 @@ bodies_to_create = ["Sun", "Moon"]
 
 # Use "Earth"/"J2000" as global frame origin and orientation.
 global_frame_origin = "Moon"
-global_frame_orientation = "ECLIPJ2000"
+# global_frame_orientation = "ECLIPJ2000"
+global_frame_orientation = "J2000"
 
 # Create default body settings, usually from `spice`.
 body_settings = environment_setup.get_default_body_settings(
@@ -108,14 +108,19 @@ body_settings.get("GRAIL_A").vehicle_shape_settings = full_panelled_body_setting
 # set mass of GRAIL_A
 body_settings.get("GRAIL_A").constant_mass = 202.4
 
-# need to add an emphermeis setting to GRAIL_A in order to add synchronous rotation model
-body_settings.get("GRAIL_A").ephemeris_settings = environment_setup.ephemeris.direct_spice("Moon", "ECLIPJ2000")
+spice.load_kernel(this_file_path + "/input/grail_v07.tf")
+spice.load_kernel(this_file_path + "/input/gra_rec_120402_120408.bc")
+spice.load_kernel(this_file_path + "/input/grail_120301_120529_sci_v02.bsp")
+spice.load_kernel(this_file_path + "/input/gra_sclkscet_00014.tsc")
 
-# need to add a roation model to GRAIL_A (synchronous) in order to create vehicle shape
-body_settings.get("GRAIL_A").rotation_model_settings = environment_setup.rotation_model.synchronous(
-    "Moon", "ECLIPJ2000", "VehicleFixed"
+# apply ephemeris and rotation model settings to GRAIL_A
+body_settings.get("GRAIL_A").ephemeris_settings = environment_setup.ephemeris.interpolated_spice(
+    simulation_start_epoch, simulation_end_epoch, 10.0, "Moon", global_frame_orientation 
 )
 
+body_settings.get("GRAIL_A").rotation_model_settings = environment_setup.rotation_model.spice(
+    global_frame_orientation, "GRAIL-A_SPACECRAFT", ""
+)
 
 # Define bodies that are propagated
 bodies_to_propagate = ["GRAIL_A"]
@@ -123,18 +128,9 @@ bodies_to_propagate = ["GRAIL_A"]
 # Define central body of propagation
 central_bodies = ["Moon"]
 
-
 moon_gravitational_parameter = spice.get_body_gravitational_parameter("Moon")
 
-initial_state = element_conversion.keplerian_to_cartesian_elementwise(
-    gravitational_parameter=moon_gravitational_parameter,
-    semi_major_axis=1788000,
-    eccentricity=4.03294322e-03,
-    inclination=np.rad2deg(90),
-    argument_of_periapsis=1.31226971e+00,
-    longitude_of_ascending_node=3.82958313e-01,
-    true_anomaly=3.07018490e+00,
-)
+initial_state = spice.get_body_cartesian_state_at_epoch("GRAIL_A", "Moon", "ECLIPJ2000", "None", simulation_start_epoch)
 
 # Create termination settings
 termination_settings = propagation_setup.propagator.time_termination(simulation_end_epoch)
@@ -151,8 +147,6 @@ dependent_variables_to_save = [
     propagation_setup.dependent_variable.total_acceleration("GRAIL_A"),
     propagation_setup.dependent_variable.single_acceleration(propagation_setup.acceleration.radiation_pressure_type, "GRAIL_A", "Sun")
 ]
-
-
 
 bodies_model_A = environment_setup.create_system_of_bodies(body_settings)
 
@@ -306,7 +300,7 @@ environment_setup.add_radiation_pressure_target_model(
 # Define accelerations acting on GRAIL_A
 acceleration_settings_GRAIL_A = dict(
     Moon=[propagation_setup.acceleration.point_mass_gravity(),
-          propagation_setup.acceleration.radiation_pressure()],
+        propagation_setup.acceleration.radiation_pressure()],
     Sun=[propagation_setup.acceleration.radiation_pressure()],
 )
 
@@ -339,17 +333,16 @@ dynamics_simulator_model_C = numerical_simulation.create_dynamics_simulator(
 
 # PLOTTING
 
-
 states_A = result2array(dynamics_simulator_model_A.state_history)
 states_B = result2array(dynamics_simulator_model_B.state_history)
 states_C = result2array(dynamics_simulator_model_C.state_history)
-
 
 dep_vars_A = result2array(dynamics_simulator_model_A.dependent_variable_history)
 dep_vars_B = result2array(dynamics_simulator_model_B.dependent_variable_history)
 dep_vars_C = result2array(dynamics_simulator_model_C.dependent_variable_history)
 
-time_array = states_A[:, 0]
+
+time_array = states_A[:, 0] - simulation_start_epoch
 
 states_A_C = states_A - states_C
 states_B_C = states_B - states_C
@@ -357,8 +350,9 @@ states_B_C = states_B - states_C
 dep_vars_A_C = dep_vars_A[:, 0:4] - dep_vars_C[:, 0:4]
 dep_vars_B_C = dep_vars_B[:, 0:4] - dep_vars_C[:, 0:4]
 
-orbital_period = 2 * np.pi * ( 1788000**3 / moon_gravitational_parameter ) ** (1/2)
 
+keplerian_initial_state = element_conversion.cartesian_to_keplerian(initial_state, moon_gravitational_parameter)
+orbital_period = 2 * np.pi * ( keplerian_initial_state[0]**3 / moon_gravitational_parameter ) ** (1/2)
 no_orbits_array = time_array / orbital_period
 
 
@@ -432,9 +426,6 @@ plt.grid()
 
 plt.tight_layout()
 
-# print("Max acceleration due to on Moon radiation pressure in model B:", np.max(np.linalg.norm(dep_vars_B[:, 7:10], axis=1)), "m/s2")
-# print("Max acceleration due to on Moon radiation pressure in model C:", np.max(np.linalg.norm(dep_vars_C[:, 7:10], axis=1)), "m/s2")
-
 plt.legend()
 
 plt.savefig("radiation_pressure_diff_models.png")
@@ -466,7 +457,6 @@ for ax in axs:
     ax.set_xlabel("No. of orbits [-]")
     ax.grid()
     ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
-    # ax.set_yscale("log")
     
 fig.tight_layout()
 
@@ -516,7 +506,6 @@ for ax in axs:
     ax.set_xlabel("No. of orbits [-]")
     ax.grid()
     ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
-    # ax.set_yscale("log")
     
 fig.tight_layout()
 
